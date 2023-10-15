@@ -1,6 +1,7 @@
 # The corresponding Colab can be found here: https://colab.research.google.com/drive/1t6GN768qPsjhLlwCsdj8-ROXLf0MCsZS#scrollTo=YfKWbBugNF93
 import torch
 import torch.nn as nn
+from datetime import datetime
 from torch.nn import functional as F
 
 # hyperparameters
@@ -188,6 +189,8 @@ m = model.to(device)
 # Create a PyTorch optimizer
 optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
 
+start_time = datetime.now()
+print(f"training using device: {device}")
 for iter in range(max_iters):
     # Every once in a while we report the loss
     if iter % eval_interval == 0:
@@ -202,6 +205,10 @@ for iter in range(max_iters):
     optimizer.zero_grad(set_to_none=True)
     loss.backward()
     optimizer.step()
+
+end_time = datetime.now()
+time_diff = end_time - start_time
+print(f"Traing Duration: {time_diff}")
 
 print("generating...")
 context = torch.zeros((1, 1), dtype=torch.long, device=device)
