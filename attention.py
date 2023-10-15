@@ -6,9 +6,9 @@ from torch.nn import functional as F
 # hyperparameters
 batch_size = 32
 block_size = 8
-max_iters = 10000
+max_iters = 5000
 eval_interval = 300
-learning_rate = 1e-2
+learning_rate = 1e-3
 device = "cuda" if torch.cuda.is_available() else "cpu"
 eval_iters = 200
 n_embd = 32
@@ -101,7 +101,13 @@ class MultiHeadAttention(nn.Module):
 
     def __init__(self, num_heads, head_size):
         super().__init__()
-        # self.heads = nn.Mo
+
+        # This needs to be nn.ModuleList because that's the only way for pytorch
+        # to recognize it as parameters so that it can perform back propagation.
+        self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
+
+    def forward(self, x):
+        return torch.cat([h(x) for h in self.heads], dim=-1)  # (B,T,C*head)
 
 
 class BigramLanguageModel(nn.Module):
@@ -117,6 +123,11 @@ class BigramLanguageModel(nn.Module):
         # Create a single self attention module
         self.sa_head = Head(n_embd)
 
+        # Create multi-head attention module
+        self.ma_head = MultiHeadAttention(
+            4, n_embd // 4  # 4 heads of 8 dimention self-attention
+        )
+
         self.lm_head = nn.Linear(n_embd, vocab_size)
 
     def forward(self, idx, targets=None):
@@ -126,7 +137,7 @@ class BigramLanguageModel(nn.Module):
         pos_emb = self.position_embedding_table(torch.arange(T, device=device))  # (T,C)
 
         x = tok_emb + pos_emb  # (B,T,C)
-        x = self.sa_head(x)  # apply attention (B,T,C)
+        x = self.ma_head(x)  # apply attention (B,T,C)
 
         # A feed forward after attention, which is proposed in the original
         # paper
