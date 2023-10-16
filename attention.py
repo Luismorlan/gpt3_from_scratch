@@ -78,9 +78,11 @@ class Head(nn.Module):
     def forward(self, x):
         B, T, C = x.shape
 
-        k = self.key(x)  # (B,T,C)
-        q = self.query(x)  # (B,T,C)
-        v = self.value(x)  # (B,T,C)
+        k = self.key(
+            x
+        )  # (B,T,h), h usually == C, if not, it usually is multi head and will concat to C.
+        q = self.query(x)  # (B,T,h)
+        v = self.value(x)  # (B,T,h)
 
         # Scale down so that the variance stays at the same to make the softmax
         # more sparsed out instead of an activation.
@@ -92,7 +94,7 @@ class Head(nn.Module):
 
         wei = F.softmax(wei, dim=-1)  # (B,T,T)
 
-        out = wei @ v
+        out = wei @ v  # (B,T,h)
 
         return out
 
@@ -107,8 +109,13 @@ class MultiHeadAttention(nn.Module):
         # to recognize it as parameters so that it can perform back propagation.
         self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
 
+        # This is according to the original paper
+        self.proj = nn.Linear(n_embd, n_embd)
+
     def forward(self, x):
-        return torch.cat([h(x) for h in self.heads], dim=-1)  # (B,T,C*head)
+        out = torch.cat([h(x) for h in self.heads], dim=-1)  # (B,T,C*head)
+        out = self.proj(out)
+        return out
 
 
 class FeedForward(nn.Module):
@@ -117,12 +124,32 @@ class FeedForward(nn.Module):
     def __init__(self, n_emdb):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(n_embd, n_embd),
+            nn.Linear(n_embd, 4 * n_embd),
             nn.ReLU(),
+            nn.Linear(4 * n_embd, n_embd),
         )
 
     def forward(self, x):
         return self.net(x)
+
+
+class Block(nn.Module):
+    """Transformer block, performs communication and computation"""
+
+    def __init__(self, n_embd, n_head):
+        super().__init__()
+        head_size = n_embd // n_head
+
+        # Do communication
+        self.ma_head = MultiHeadAttention(n_head, head_size)
+
+        # Do computation
+        self.ffwd = FeedForward(n_embd)
+
+    def forward(self, x):
+        x = x + self.ma_head(x)
+        x = x + self.ffwd(x)
+        return x
 
 
 class BigramLanguageModel(nn.Module):
@@ -138,12 +165,11 @@ class BigramLanguageModel(nn.Module):
         # Deprecated: Create a single self attention module
         # self.sa_head = Head(n_embd)
 
-        # Create multi-head attention module
-        self.ma_head = MultiHeadAttention(
-            4, n_embd // 4  # 4 heads of 8 dimention self-attention
+        self.blocks = nn.Sequential(
+            Block(n_embd, n_head=4),
+            Block(n_embd, n_head=4),
+            Block(n_embd, n_head=4),
         )
-
-        self.ffwd = FeedForward(n_embd)
 
         # This is the last output layer in the transformer paper.
         self.lm_head = nn.Linear(n_embd, vocab_size)
@@ -155,8 +181,8 @@ class BigramLanguageModel(nn.Module):
         pos_emb = self.position_embedding_table(torch.arange(T, device=device))  # (T,C)
 
         x = tok_emb + pos_emb  # (B,T,C)
-        x = self.ma_head(x)  # apply attention (B,T,C)
-        x = self.ffwd(x)  # Apply feedforward shaping to (B,T,C)
+
+        x = self.blocks(x)
 
         logits = self.lm_head(x)  # (B,T,vocab_size)
 
