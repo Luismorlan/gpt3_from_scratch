@@ -90,7 +90,7 @@ class Head(nn.Module):
 
         # Scale down so that the variance stays at the same to make the softmax
         # more sparsed out instead of an activation.
-        wei = q @ k.transpose(-2, -1) * C**-0.5
+        wei = q @ k.transpose(-2, -1) * C**-0.5  # (B,T,T)
 
         # Make it a decoder block by keeping the information flow from only past
         # to the future.
@@ -105,22 +105,68 @@ class Head(nn.Module):
 
 
 class MultiHeadAttention(nn.Module):
-    """multiple heads of self-attention in parallel"""
+    """multiple heads of self-attention in parallel
+
+    num_heads - how many attention heads to run in parallel
+    head_size - output dimension, where num_heads * head_size = C.
+    """
 
     def __init__(self, num_heads, head_size):
         super().__init__()
 
+        # Option 1: Use for loop for multi head calculation.
         # This needs to be nn.ModuleList because that's the only way for pytorch
         # to recognize it as parameters so that it can perform back propagation.
-        self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
+        # self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
+        self.head_size = head_size
+
+        assert n_embd % num_heads == 0
+        self.num_heads = num_heads
+
+        self.c_attn = nn.Linear(n_embd, 3 * n_embd, bias=False)
+        # Register a (1,1,T,T) buffer
+        self.register_buffer(
+            "tril",
+            torch.tril(torch.ones(block_size, block_size)).view(
+                1, 1, block_size, block_size
+            ),
+        )
 
         # This is according to the original paper
         self.proj = nn.Linear(n_embd, n_embd)
 
+        self.attn_dropout = nn.Dropout(dropout)
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
-        out = torch.cat([h(x) for h in self.heads], dim=-1)  # (B,T,C*head)
+        # [Option 1] out = torch.cat([h(x) for h in self.heads], dim=-1)  # (B,T,C*head)
+
+        # [Option 2] perform one matrix multiplication via one shot.
+        B, T, C = x.shape
+
+        # directly map the input to 3x size output, where split the last
+        # dimension will give us the batched q, k, v
+        q, k, v = self.c_attn(x).split(n_embd, dim=-1)  # 3 tuple, each of (B, T, C)
+
+        # Then split the attention to be (B, nh, T, hs)
+        k = k.view(B, T, self.num_heads, C // self.num_heads).transpose(1, 2)
+        q = q.view(B, T, self.num_heads, C // self.num_heads).transpose(1, 2)
+        v = v.view(B, T, self.num_heads, C // self.num_heads).transpose(1, 2)
+
+        # Calculate wei in a batch, shape: (B, nh, T, T)
+        wei = q @ k.transpose(-2, -1) * (k.size(-1) ** -0.5)
+        wei = wei.masked_fill(self.tril[:, :, :T, :T] == 0, float("-inf"))
+        wei = F.softmax(wei, dim=-1)
+        wei = self.attn_dropout(wei)
+        out = wei @ v  # This is (B, nh, T, hs)
+
+        # We need to then make it (B, T, C)
+        # 1. transpose -> (B, T, nh, hs)
+        # 2. making it contiguous memory so that we can call view
+        # 3. reshape and remove the last dimension.
+        out = out.transpose(1, 2).contiguous().view(B, T, C)
+
+        # final dropout
         out = self.dropout(self.proj(out))
         return out
 
