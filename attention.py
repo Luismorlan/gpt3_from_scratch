@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 from datetime import datetime
 from torch.nn import functional as F
+import wandb
 
 # hyperparameters
 batch_size = 64
@@ -18,6 +19,15 @@ n_layer = 6
 dropout = 0.2
 
 # ---------
+wandb.init(
+    project="implement gpt3 from scratch",
+    config={
+        "learning_rate": 0.02,
+        "architecture": "CNN",
+        "dataset": "CIFAR-100",
+        "epochs": 10,
+    },
+)
 
 torch.manual_seed(1337)
 
@@ -308,6 +318,7 @@ for iter in range(max_iters):
         print(
             f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}"
         )
+        wandb.log({"loss": losses})
 
     xb, yb = get_batch("train")
 
