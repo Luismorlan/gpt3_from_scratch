@@ -125,18 +125,23 @@ class MultiHeadAttention(nn.Module):
 
         self.c_attn = nn.Linear(n_embd, 3 * n_embd, bias=False)
         # Register a (1,1,T,T) buffer
-        self.register_buffer(
-            "tril",
-            torch.tril(torch.ones(block_size, block_size)).view(
-                1, 1, block_size, block_size
-            ),
-        )
 
         # This is according to the original paper
         self.proj = nn.Linear(n_embd, n_embd)
 
         self.attn_dropout = nn.Dropout(dropout)
         self.dropout = nn.Dropout(dropout)
+
+        # Use flash attention is it exist (for torch > 2.0)
+        self.flash = hasattr(torch.nn.functional, "scaled_dot_product_attention")
+        if not self.flash:
+            print("WARNING: Using manual implemented attention")
+            self.register_buffer(
+                "tril",
+                torch.tril(torch.ones(block_size, block_size)).view(
+                    1, 1, block_size, block_size
+                ),
+            )
 
     def forward(self, x):
         # [Option 1] out = torch.cat([h(x) for h in self.heads], dim=-1)  # (B,T,C*head)
@@ -153,12 +158,23 @@ class MultiHeadAttention(nn.Module):
         q = q.view(B, T, self.num_heads, C // self.num_heads).transpose(1, 2)
         v = v.view(B, T, self.num_heads, C // self.num_heads).transpose(1, 2)
 
-        # Calculate wei in a batch, shape: (B, nh, T, T)
-        wei = q @ k.transpose(-2, -1) * (k.size(-1) ** -0.5)
-        wei = wei.masked_fill(self.tril[:, :, :T, :T] == 0, float("-inf"))
-        wei = F.softmax(wei, dim=-1)
-        wei = self.attn_dropout(wei)
-        out = wei @ v  # This is (B, nh, T, hs)
+        if self.flash:
+            out = torch.nn.functional.scaled_dot_product_attention(
+                q,
+                k,
+                v,
+                attn_mask=None,
+                dropout_p=dropout if self.training else 0,
+                is_causal=True,
+            )
+        else:
+            print("using manual implementation of attention")
+            # Calculate wei in a batch, shape: (B, nh, T, T)
+            wei = q @ k.transpose(-2, -1) * (k.size(-1) ** -0.5)
+            wei = wei.masked_fill(self.tril[:, :, :T, :T] == 0, float("-inf"))
+            wei = F.softmax(wei, dim=-1)
+            wei = self.attn_dropout(wei)
+            out = wei @ v  # This is (B, nh, T, hs)
 
         # We need to then make it (B, T, C)
         # 1. transpose -> (B, T, nh, hs)
