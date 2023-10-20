@@ -5,6 +5,9 @@ from datetime import datetime
 from torch.nn import functional as F
 import wandb
 
+# TODO: Use a different tokenizer
+# TODO: Try GELU
+
 # hyperparameters
 batch_size = 64
 block_size = 256
@@ -209,7 +212,7 @@ class FeedForward(nn.Module):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(n_embd, 4 * n_embd),
-            nn.ReLU(),
+            nn.GELU(),
             nn.Linear(4 * n_embd, n_embd),
             nn.Dropout(dropout),
         )
@@ -244,7 +247,7 @@ class Block(nn.Module):
         return x
 
 
-class BigramLanguageModel(nn.Module):
+class GPT(nn.Module):
     def __init__(self):
         super().__init__()
         self.token_embedding_table = nn.Embedding(
@@ -303,7 +306,7 @@ class BigramLanguageModel(nn.Module):
         return idx
 
 
-model = BigramLanguageModel()
+model = GPT()
 m = model.to(device)
 
 # Create a PyTorch optimizer
