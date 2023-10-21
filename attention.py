@@ -269,6 +269,14 @@ class GPT(nn.Module):
         # This is the last output layer in the transformer paper.
         self.lm_head = nn.Linear(n_embd, vocab_size)
 
+        print("num of parameters: %.2fM" % (self.get_num_params() / 1e6))
+
+    def get_num_params(self, non_embedding=True):
+        n_params = sum(p.numel() for p in self.parameters())
+        if non_embedding:
+            n_params -= self.position_embedding_table.weight.numel()
+        return n_params
+
     def forward(self, idx, targets=None):
         B, T = idx.shape
 
