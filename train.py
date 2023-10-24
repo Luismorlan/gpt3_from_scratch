@@ -12,6 +12,8 @@ from tqdm import tqdm
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
+_OUTPUT_DIR = "./output"
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="training script for transformer")
@@ -37,7 +39,15 @@ def parse_args():
         "--eval_interval", type=int, help="print loss every x iterations", default=100
     )
     parser.add_argument(
-        "--dataset", help="dataset to train the model", default="shakespeare"
+        "--dataset", help="dataset to train the model", default="shakespeare_simple"
+    )
+    parser.add_argument(
+        "--resume_from",
+        help="resume the initial weight from a pretrained model",
+        default="shakespear",
+    )
+    parser.add_argument(
+        "--name", help="model name for saving checkpoint", default="final.pt"
     )
     return parser.parse_args()
 
@@ -112,13 +122,30 @@ def load_data(dataset: str):
     return train_data, val_data
 
 
+def load_weight(model):
+    ckpt = torch.load(os.path.join(_OUTPUT_DIR, args.resume_from), map_location=device)
+    model.load_state_dict(ckpt["model"])
+
+
 def main(args):
     config = load_from_file(f"./config/{args.config}")
     train_data, val_data = load_data(args.dataset)
     model = GPT(config)
+
+    if args.resume_from != "":
+        print(f"resuming from model {args.resume_from}")
+        load_weight(model)
+
     model.to(device)
+
     print("start training")
     train(model, train_data, val_data, args, config)
+    print("saving model...")
+
+    ckpt = {"model": model.state_dict(), "config": config, "args": args}
+    torch.save(ckpt, os.path.join(_OUTPUT_DIR, args.name))
+
+    print("finished")
 
 
 if __name__ == "__main__":

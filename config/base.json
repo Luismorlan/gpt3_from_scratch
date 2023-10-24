@@ -3,5 +3,5 @@
   "n_embd": 384,
   "n_head": 6,
   "n_layer": 6,
-  "vocab_size": 50257
+  "vocab_size": 65
 }
